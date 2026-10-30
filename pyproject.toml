@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deptho"
+version = "0.1.0"
+description = "The tick-level reality check for crypto perp backtests: tearsheets with funding and fee attribution, offline."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.22", "pandas>=2.0", "plotly>=5.15"]
+keywords = ["backtesting", "crypto", "perpetuals", "tick data", "binance", "quant", "tearsheet", "funding rate"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+[project.urls]
+Homepage = "https://deptho.io"
+Guides = "https://deptho.io/fix/"
+Pro = "https://deptho.io/pro.html"
+Source = "https://github.com/jjinaustin/deptho"
+
+[project.optional-dependencies]
+parquet = ["pyarrow>=12"]
+notebook = ["ipython"]
+memory = ["psutil"]
+all = ["pyarrow>=12", "ipython", "psutil"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deptho"]
