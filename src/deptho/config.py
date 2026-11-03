@@ -16,15 +16,20 @@ BRAND = "Deptho"
 HOMEPAGE = "https://deptho.io"
 
 
-def tagged(url: str, source: str) -> str:
-    """``url`` with ``utm_source=<source>`` (banner, docstring, report-footer), so the site's
-    analytics can tell where a visit started. Static text: nothing is sent from here."""
-    if "utm_source=" in url:
+DEFAULT_UPGRADE_URL = f"{HOMEPAGE}/pro.html"
+LINK_SOURCES = ("banner", "docstring", "report-footer")
+
+
+def via(source: str, url: str | None = None) -> str:
+    """The deptho.io link for one place in the library: ``/go/<source>`` (banner, docstring,
+    report-footer), a page on the site that forwards straight on, so the site's analytics
+    can count where visits start. Static text: nothing is sent from here. A custom
+    ``DEPTHO_UPGRADE_URL`` is used as given."""
+    if source not in LINK_SOURCES:
+        raise ValueError(f"unknown link source {source!r}")
+    if url is not None and url != DEFAULT_UPGRADE_URL:
         return url
-    base, hash_, frag = url.partition("#")
-    if base.count("/") == 2:                     # bare domain: https://deptho.io -> https://deptho.io/
-        base += "/"
-    return f"{base}{'&' if '?' in base else '?'}utm_source={source}{hash_}{frag}"
+    return f"{HOMEPAGE}/go/{source}"
 
 
 @dataclass
@@ -40,7 +45,7 @@ class Config:
     # Also governs every other in-library mention of Deptho: the one-line Pro pointers
     # in docstrings and the report footer.
     upgrade_prompts: bool = field(default_factory=lambda: not _env_flag("DEPTHO_NO_PROMPTS", False))
-    upgrade_url: str = os.environ.get("DEPTHO_UPGRADE_URL", f"{HOMEPAGE}/pro.html")
+    upgrade_url: str = os.environ.get("DEPTHO_UPGRADE_URL", DEFAULT_UPGRADE_URL)
     # "Made with Deptho" link at the foot of saved and displayed reports: plain text and an
     # <a href>, nothing loaded from the network. Off here, with DEPTHO_NO_FOOTER=1, or with
     # upgrade_prompts off.
@@ -74,7 +79,7 @@ def pro_counterpart(line: str):
 def _refresh_pro_docs() -> None:
     cfg = globals().get("config")
     on = cfg is None or cfg.upgrade_prompts
-    url = tagged(cfg.upgrade_url if cfg is not None else f"{HOMEPAGE}/pro.html", "docstring")
+    url = via("docstring", cfg.upgrade_url if cfg is not None else None)
     for f, base, line in _pro_docs:
         # Match the docstring's own indentation (Python 3.13+ strips it at compile time).
         rest = [ln for ln in base.splitlines()[1:] if ln.strip()]

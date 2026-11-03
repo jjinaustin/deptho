@@ -293,8 +293,7 @@ def test_pro_pointers_in_docstrings_follow_upgrade_prompts(monkeypatch):
     monkeypatch.setattr(dp.config, "upgrade_prompts", True)
     for f in pointed:
         last = inspect.getdoc(f).splitlines()[-1]
-        assert last.startswith("Deptho Pro: ") and last.endswith("(https://deptho.io/pro.html?utm_source=docstring)."), \
-            (f.__name__, last)
+        assert last.startswith("Deptho Pro: ") and last.endswith("(https://deptho.io/go/docstring)."), (f.__name__, last)
     assert "Deptho Pro" not in (dp.pnl_from_positions.__doc__ or "")       # no counterpart, no pointer
     monkeypatch.setattr(dp.config, "upgrade_prompts", False)
     for f in pointed:
@@ -309,7 +308,7 @@ def test_report_footer_is_a_plain_link_with_off_switches(monkeypatch):
     monkeypatch.setattr(dp.config, "report_footer", True)
     html = rep.to_html(include_plotlyjs=False)
     foot = re.search(r'<div class="dp-footer".*?</div>', html).group(0)
-    assert re.findall(r'(?:href|src)="([^"]+)"', foot) == ["https://deptho.io/?utm_source=report-footer"]  # one link
+    assert re.findall(r'(?:href|src)="([^"]+)"', foot) == ["https://deptho.io/go/report-footer"]  # one link
     assert "Made with" in foot and "<img" not in foot and "<script" not in foot
     monkeypatch.setattr(dp.config, "report_footer", False)
     assert "dp-footer" not in rep.to_html(include_plotlyjs=False)
@@ -320,15 +319,54 @@ def test_report_footer_is_a_plain_link_with_off_switches(monkeypatch):
     assert dp.config.__class__().report_footer is False
 
 
-def test_in_library_links_are_tagged_and_static():
+def test_in_library_links_go_through_source_pages():
     from deptho import guard
-    from deptho.config import tagged
+    from deptho.config import DEFAULT_UPGRADE_URL, via
 
-    assert tagged("https://deptho.io", "banner") == "https://deptho.io/?utm_source=banner"
-    assert tagged("https://deptho.io/pro.html#pricing", "banner") == "https://deptho.io/pro.html?utm_source=banner#pricing"
-    assert tagged("https://x.io/p?a=1", "banner") == "https://x.io/p?a=1&utm_source=banner"
-    assert tagged("https://x.io/p?utm_source=mine", "banner") == "https://x.io/p?utm_source=mine"   # custom URL kept
+    assert via("banner", DEFAULT_UPGRADE_URL) == "https://deptho.io/go/banner"
+    assert via("report-footer") == "https://deptho.io/go/report-footer"
+    assert via("banner", "https://example.com/pro") == "https://example.com/pro"     # custom DEPTHO_UPGRADE_URL kept
+    with pytest.raises(ValueError):
+        via("newsletter")
     a = guard.LoadAssessment(path="t.csv", file_bytes=10**9, est_memory_bytes=4 * 10**9, est_seconds=30,
                              available_bytes=10**9, sample_rows=1)
-    assert "https://deptho.io/pro.html?utm_source=banner" in guard.notice_text(a)            # terminal
-    assert 'href="https://deptho.io/pro.html?utm_source=banner"' in guard._notice_html(a)    # notebook
+    assert "https://deptho.io/go/banner" in guard.notice_text(a)                # terminal
+    assert 'href="https://deptho.io/go/banner"' in guard._notice_html(a)        # notebook
+
+
+def _tardis_from_aggtrades(src, dest):
+    """The same trades in Tardis's `trades` layout (timestamps in microseconds, aggressor as text)."""
+    from deptho import datasets as bn
+
+    raw = bn._read(src, bn.AGGTRADES_COLS)
+    maker = raw["is_buyer_maker"].astype(str).str.lower().isin(["true", "1"])
+    pd.DataFrame({
+        "exchange": "binance-futures", "symbol": "btcusdt",
+        "timestamp": raw["transact_time"].astype("int64") * 1000,
+        "local_timestamp": raw["transact_time"].astype("int64") * 1000 + 1500,
+        "id": raw["agg_trade_id"], "side": np.where(maker, "sell", "buy"),
+        "price": raw["price"], "amount": raw["quantity"],
+    }).to_csv(dest, index=False)
+    return dest
+
+
+def test_read_tardis_trades_matches_aggtrades(tmp_path):
+    from datetime import date
+    from deptho import datasets as bn
+    from deptho._synthetic import make
+
+    make(tmp_path, tick_day=date(2026, 9, 30), kline_days=1, trades_per_day=5_000)
+    agg = next(tmp_path.glob("*aggTrades*.zip"))
+    gz = _tardis_from_aggtrades(agg, tmp_path / "binance-futures_trades_2026-09-30_BTCUSDT.csv.gz")
+    a, t = bn.read_aggtrades(agg), bn.read_tardis_trades(gz)
+    assert list(t.columns) == list(a.columns) == ["price", "qty", "side"]
+    assert str(t.index.tz) == "UTC" and t.index.name == "ts" and t["side"].dtype == np.int8
+    ns = lambda f: f.set_axis(f.index.as_unit("ns"))      # index resolution differs by source and pandas version
+    pd.testing.assert_frame_equal(ns(t), ns(a), check_freq=False)
+    # Same replay either way.
+    orders = pd.DataFrame({"side": [1, -1, 1], "qty": [0.5, 2.0, 0.1]}, index=a.index[[10, 200, 3000]])
+    pd.testing.assert_frame_equal(dp.simulate_taker_fills(t, orders), dp.simulate_taker_fills(a, orders))
+    bad = tmp_path / "bad.csv"
+    pd.read_csv(gz).assign(side="unknown").to_csv(bad, index=False)
+    with pytest.raises(ValueError, match="aggressor"):
+        bn.read_tardis_trades(bad)

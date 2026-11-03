@@ -10,7 +10,7 @@ from . import datasets
 from .costs import funding_cost, pnl_from_positions, simulate_taker_fills, slippage_bps
 from .io import MemoryWallError, load
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 def __getattr__(name):

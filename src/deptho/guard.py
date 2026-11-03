@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import config, tagged
+from .config import config, via
 
 _SAMPLE_BYTES = 8 * 1024 * 1024
 # pandas' peak RSS while parsing is ~2x the finished DataFrame (parser buffers
@@ -174,7 +174,7 @@ def notice_text(a: LoadAssessment) -> str:
         "  Deptho Pro converts the file once to a columnar binary store and memory-maps it,"
         " so later loads use little RAM, all on this machine."
     )
-    lines.append(f"  Upgrade: {tagged(config.upgrade_url, 'banner')}   (hide: {_HIDE})")
+    lines.append(f"  Upgrade: {via('banner', config.upgrade_url)}   (hide: {_HIDE})")
     return "\n".join(lines)
 
 
@@ -183,7 +183,7 @@ def _card(title: str, detail: str, body: str, extra: str = "") -> str:
     light and dark notebook themes. Styled entirely from deptho._theme tokens."""
     from ._theme import FONT_DISPLAY, FONT_MONO, c, mark_svg
 
-    url = html.escape(tagged(config.upgrade_url, "banner"))
+    url = html.escape(via("banner", config.upgrade_url))
     code = f"font-family:{FONT_MONO};font-size:0.9em;color:{c('ink')}"
     body = body.replace("<code>", f'<code style="{code}">')
     return f"""
@@ -292,7 +292,7 @@ def _prompt_daily(sym: str, kind: str) -> bool:
     n, total = len(days), sum(days.values())
     text = (f"Deptho: loading daily files one at a time? deptho_pro.sync keeps them as one growing "
             f"dataset. Measured load here: {total:.1f} s for {n} daily {m['sym']} {m['kind']} files.\n"
-            f"  Upgrade: {tagged(config.upgrade_url, 'banner')}   (hide: {_HIDE})")
+            f"  Upgrade: {via('banner', config.upgrade_url)}   (hide: {_HIDE})")
     card = _card(
         "Loading daily files one at a time?",
         f"Measured load here: {total:.1f} s for {n} daily {html.escape(m['sym'])} {m['kind']} files",

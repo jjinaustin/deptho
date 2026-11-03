@@ -74,6 +74,31 @@ def read_aggtrades(path) -> pd.DataFrame:
     return out
 
 
+TARDIS_TRADES_COLS = ["exchange", "symbol", "timestamp", "local_timestamp", "id", "side", "price", "amount"]
+
+
+def read_tardis_trades(path) -> pd.DataFrame:
+    """Tick trades from a Tardis.dev ``trades`` CSV (``.csv`` or ``.csv.gz``), in the same shape
+    as :func:`read_aggtrades`: ``price``, ``qty``, ``side`` (aggressor, +1 buy / -1 sell),
+    UTC DatetimeIndex from the exchange ``timestamp`` (microseconds).
+
+    The file is yours: Deptho reads it locally and never downloads from Tardis."""
+    df = pd.read_csv(path, usecols=["timestamp", "side", "price", "amount"])
+    missing = {"timestamp", "side", "price", "amount"} - set(df.columns)
+    if missing:
+        raise ValueError(f"{path}: not a Tardis trades file (missing {sorted(missing)})")
+    side = df["side"].astype(str).str.lower()
+    out = pd.DataFrame({
+        "price": df["price"].astype("float64").to_numpy(),
+        "qty": df["amount"].astype("float64").to_numpy(),
+        "side": np.where(side == "sell", -1, 1).astype("int8"),
+    }, index=pd.to_datetime(df["timestamp"].astype("int64"), unit="us", utc=True))
+    if not side.isin(["buy", "sell"]).all():
+        raise ValueError(f"{path}: side must be 'buy' or 'sell' (the aggressor); found {sorted(set(side) - {'buy', 'sell'})[:3]}")
+    out.index.name = "ts"
+    return out.sort_index(kind="stable")
+
+
 def read_klines(path) -> pd.DataFrame:
     df = _read(path, KLINE_COLS)
     out = df[["open", "high", "low", "close", "volume"]].astype("float64")

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deptho"
-version = "0.1.0"
+version = "0.1.1"
 description = "The tick-level reality check for crypto perp backtests: tearsheets with funding and fee attribution, offline."
 readme = "README.md"
 license = "Apache-2.0"

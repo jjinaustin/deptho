@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from . import costs, metrics
-from .config import HOMEPAGE, config, tagged
+from .config import config, via
 from ._theme import FONT_DISPLAY, FONT_MONO, c, lockup_html, rgba
 
 
@@ -68,7 +68,7 @@ class Report:
             return ""
         style = (f"font-family:{FONT_MONO};font-size:12px;color:{c('ink-muted')};background:{c('abyss')};"
                  "padding:0 24px 20px;text-align:right")
-        return (f'<div class="dp-footer" style="{style}">Made with <a href="{html.escape(tagged(HOMEPAGE, "report-footer"))}" target="_blank" '
+        return (f'<div class="dp-footer" style="{style}">Made with <a href="{html.escape(via("report-footer"))}" target="_blank" '
                 f'rel="noopener" style="color:{c("ink-muted")};text-decoration:underline">Deptho</a></div>')
 
     def to_html(self, include_plotlyjs: bool | str = True) -> str:

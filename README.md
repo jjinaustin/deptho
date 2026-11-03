@@ -35,6 +35,8 @@ Cost attribution is lookahead-safe by default: a position decided at a bar's clo
 | `funding` | `pd.Series` of funding rates at funding timestamps (positive = longs pay) |
 | `fills` | `pd.DataFrame` with `side`, `price`, `ref_price`, optionally `qty`, `depth` |
 
+Tick trades come from Binance's public archive (`dp.datasets.read_aggtrades`) or from Tardis.dev `trades` files you've downloaded (`dp.datasets.read_tardis_trades`), in the same shape either way.
+
 ## Large files
 
 `dp.load(path)` reads CSV or Parquet with pandas. It first measures a small sample, and if the full file won't fit in memory it raises `dp.MemoryWallError` with an estimate, instead of letting pandas exhaust RAM and kill your kernel.
