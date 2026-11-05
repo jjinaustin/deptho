@@ -23,6 +23,7 @@ dp.tearsheet(pnl=pnl, benchmark=prices.pct_change(), title="BTC perp momentum").
 - Underwater (drawdown) curve, rolling Sharpe and Sortino, rolling alpha against a benchmark
 - Slippage distribution and slippage vs order size (pass `fills=`)
 - `report.save("report.html")` writes one self-contained HTML file that works offline
+- `report.fill_gap_card("card")` writes one shareable image (SVG, plus PNG with `pip install "deptho[png]"`): the bar-close return, the return with slippage measured by replaying the orders, and the gap between them in points
 
 Cost attribution is lookahead-safe by default: a position decided at a bar's close earns from the next bar.
 
@@ -62,4 +63,4 @@ Benchmarks, method and pricing: [deptho.io](https://deptho.io). Turn off in-libr
 - Guides: https://deptho.io/fix/
 - Deptho Pro: https://deptho.io/pro.html
 
-License: Apache-2.0. Market data comes from Binance's public archive (data.binance.vision); Deptho is not affiliated with Binance.
+License: Apache-2.0. The card's PNG uses the bundled Space Grotesk and JetBrains Mono fonts (SIL Open Font License 1.1, in `deptho/fonts/`). Market data comes from Binance's public archive (data.binance.vision); Deptho is not affiliated with Binance.

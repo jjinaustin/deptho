@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 import urllib.error
 import webbrowser
@@ -43,16 +44,42 @@ def cache_dir(symbol: str) -> Path:
     return Path(base) / symbol
 
 
+MAX_MISSING_KLINE_DAYS = 3
+
+
+class ArchiveFileMissing(RuntimeError):
+    """A file the demo needs isn't in the archive (the host answered, the file isn't there)."""
+
+
 def fetch(symbol: str, day: date, kline_days: int, dest: Path, log=print) -> Path:
-    """Download the archive files the demo needs. Tick/book files are optional."""
+    """Download the archive files the demo needs. Tick/book files are optional; a few missing
+    kline days are skipped (and named); a missing funding month stops with the file's URL."""
     span = bn.days(day, kline_days)
     log(f"fetching {symbol}: {kline_days} days of 1m klines + funding, tick day {day} -> {dest}")
+    missing = []
     for i, d in enumerate(span, 1):
-        bn.download("klines", symbol, d, dest)
+        try:
+            bn.download("klines", symbol, d, dest)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            missing.append(d)
+            log(f"  klines {d}: not in the archive (404) {bn._url('klines', symbol, d)}")
         if i % 15 == 0 or i == len(span):
             log(f"  klines {i}/{len(span)}")
+    if len(missing) > MAX_MISSING_KLINE_DAYS:
+        raise ArchiveFileMissing(f"{len(missing)} of {len(span)} kline days aren't in the archive "
+                                 f"({missing[0]} .. {missing[-1]}); try an earlier --day")
+    if missing:
+        log(f"  continuing without {len(missing)} kline day(s): {', '.join(map(str, missing))}")
     for month in sorted({d.replace(day=1) for d in span}):
-        bn.download("fundingRate", symbol, month, dest)
+        try:
+            bn.download("fundingRate", symbol, month, dest)
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+            raise ArchiveFileMissing(f"the funding file for {month:%Y-%m} isn't in the archive yet "
+                                     f"({bn._url('fundingRate', symbol, month)}); try an earlier --day") from e
     for kind in ("aggTrades", "bookDepth"):
         try:
             bn.download(kind, symbol, day, dest)
@@ -62,16 +89,44 @@ def fetch(symbol: str, day: date, kline_days: int, dest: Path, log=print) -> Pat
     return dest
 
 
-def load_dir(data: Path):
-    def cat(pattern, reader):
-        parts = [reader(p) for p in sorted(data.glob(pattern))]
+_FILE_DATE = re.compile(r"-(\d{4}-\d{2})(-\d{2})?\.zip$")
+
+
+def _in_window(path: Path, start: date | None, end: date | None) -> bool:
+    """Daily files: their day is in [start, end]. Monthly files: their month overlaps it."""
+    if start is None or end is None:
+        return True
+    m = _FILE_DATE.search(path.name)
+    if not m:
+        return False
+    if m.group(2):
+        return start <= date.fromisoformat(m.group(1) + m.group(2)) <= end
+    first = date.fromisoformat(m.group(1) + "-01")
+    return start.replace(day=1) <= first <= end
+
+
+def load_dir(data: Path, start: date | None = None, end: date | None = None):
+    """Read the archive files in ``data``; with ``start``/``end``, only those of that window (the
+    cache keeps earlier runs' days, which must not leak into this one). Tick trades and depth come
+    from one day only: ``end``, or without a window the latest day present. Replaying orders
+    across two tick days a month apart would fill them at the other day's prices."""
+    def cat(pattern, reader, s=start, e=end):
+        parts = [reader(p) for p in sorted(data.glob(pattern)) if _in_window(p, s, e)]
         return pd.concat(parts).sort_index() if parts else None
 
     klines = cat("*-1m-*.zip", bn.read_klines)
     funding = cat("*-fundingRate-*.zip", bn.read_funding)
     if klines is None or funding is None:
         raise FileNotFoundError(f"{data}: need *-1m-*.zip klines and *-fundingRate-*.zip files")
-    return klines, funding, cat("*-aggTrades-*.zip", bn.read_aggtrades), cat("*-bookDepth-*.zip", bn.read_bookdepth)
+    tick = end
+    if tick is None:
+        days = [m.group(1) + m.group(2) for p in data.glob("*-aggTrades-*.zip")
+                if (m := _FILE_DATE.search(p.name)) and m.group(2)]
+        tick = date.fromisoformat(max(days)) if days else None
+    if tick is None:
+        return klines, funding, None, None
+    return (klines, funding, cat("*-aggTrades-*.zip", bn.read_aggtrades, tick, tick),
+            cat("*-bookDepth-*.zip", bn.read_bookdepth, tick, tick))
 
 
 def strategy(close: pd.Series, fast: int = 12, slow: int = 48, target_vol: float = 0.6) -> pd.Series:
@@ -86,7 +141,9 @@ def strategy(close: pd.Series, fast: int = 12, slow: int = 48, target_vol: float
 
 
 def execution_study(trades: pd.DataFrame, depth: pd.DataFrame | None, n: int = 600, seed: int = 1) -> pd.DataFrame:
-    """Replay market orders of 0.05-25 units at random times through the tick day."""
+    """Replay market orders of 0.05-25 units at random times through the tick day. An order whose
+    last print before it, or the print that completes its fill, is more than MAX_WAIT away is
+    dropped rather than filled across a gap in the tape."""
     rng = np.random.default_rng(seed)
     lo, hi = trades.index[0].value, trades.index[-1].value
     when = pd.to_datetime(np.sort(rng.integers(lo, hi - 600 * 10**9, n)), utc=True)
@@ -94,27 +151,33 @@ def execution_study(trades: pd.DataFrame, depth: pd.DataFrame | None, n: int = 6
         "side": rng.choice([1, -1], n),
         "qty": np.round(np.exp(rng.uniform(np.log(0.05), np.log(25), n)), 3),
     }, index=when)
-    return costs.simulate_taker_fills(trades, orders, depth)
+    return costs.simulate_taker_fills(trades, orders, depth, max_wait=MAX_WAIT)
 
 
-def run(data: Path, symbol: str = "BTCUSDT", fee_bps: float = 5.0) -> Report:
-    klines, funding, trades, depth = load_dir(data)
+MAX_WAIT = "5min"
+
+
+def run(data: Path, symbol: str = "BTCUSDT", fee_bps: float = 5.0,
+        start: date | None = None, end: date | None = None) -> Report:
+    klines, funding, trades, depth = load_dir(data, start, end)
     # Klines are stamped at their open time; a close is only known at open + 1m.
     close_1m = klines["close"].shift(freq="1min")
     close = close_1m.resample("5min", label="right", closed="right").last().dropna()
     pos = strategy(close)
 
     fills = execution_study(trades, depth) if trades is not None and len(trades) else None
-    # Charge the strategy the median execution cost from the trade-print replay.
-    slip = float(costs.slippage_bps(fills)["slippage_bps"].median()) if fills is not None and len(fills) else 1.0
+    # Charge the strategy the mean execution cost from the trade-print replay: the median hides the tail.
+    slip = float(costs.slippage_bps(fills)["slippage_bps"].mean()) if fills is not None and len(fills) else 1.0
 
     pnl = costs.pnl_from_positions(close, pos, funding=funding, fee_bps=fee_bps, slippage_bps=max(slip, 0.0))
     from ._synthetic import SYNTHETIC_MARKER, SYNTHETIC_TAG
 
     tag = SYNTHETIC_TAG if (data / SYNTHETIC_MARKER).exists() else None
+    charged = max(slip, 0.0)
     return tearsheet(pnl=pnl, benchmark=close.pct_change(), fills=fills, data_tag=tag,
                      fills_label="Simulated execution cost (trade-print replay)",
-                     title=f"{symbol} perp - EMA trend, {len(klines) // 1440} days")
+                     slippage_label=f"Slippage (mean replay cost, {charged:.2f} bps)",
+                     title=f"{symbol} perp \u2013 EMA trend, {len(klines) // 1440} days")
 
 
 def main(argv=None, default_data: Path | None = None) -> Path:
@@ -127,9 +190,12 @@ def main(argv=None, default_data: Path | None = None) -> Path:
     ap.add_argument("--fee-bps", type=float, default=5.0, help="taker fee; Binance VIP0 USD-M = 5 bps")
     ap.add_argument("--out", type=Path, default=Path("deptho_report.html"))
     ap.add_argument("--no-open", action="store_true")
+    ap.add_argument("--card", type=Path, default=None, metavar="PATH",
+                    help="also write the fill gap card: PATH.svg, and PATH.png with deptho[png]")
     args = ap.parse_args(argv)
 
     day = args.day or default_day()
+    start = end = None
     if args.data is not None and any(args.data.glob("*-1m-*.zip")):
         data = args.data
     elif args.synthetic:
@@ -142,15 +208,42 @@ def main(argv=None, default_data: Path | None = None) -> Path:
         data = cache_dir(args.symbol)
         try:
             fetch(args.symbol, day, args.days, data)
+        except ArchiveFileMissing as e:
+            sys.exit(f"{e}. Or try --synthetic for an offline demo.")
+        except urllib.error.HTTPError as e:
+            sys.exit(f"data.binance.vision answered HTTP {e.code} for {e.url}. Try an earlier --day, "
+                     "or --synthetic for an offline demo.")
         except urllib.error.URLError as e:
-            sys.exit(f"could not reach data.binance.vision ({e}). Try --synthetic for an offline demo.")
+            sys.exit(f"could not reach data.binance.vision ({e.reason}). Try --synthetic for an offline demo.")
+        start, end = bn.days(day, args.days)[0], day          # only this run's window, not older cache
 
-    report = run(data, args.symbol, args.fee_bps)
+    report = run(data, args.symbol, args.fee_bps, start, end)
     print(report.table().to_string(float_format=lambda x: f"{x:,.4f}"))
     path = report.save(args.out).resolve()
     print(f"\nreport -> {path}")
+    failed = None
+    if args.card is not None:
+        from . import card as card_mod
+
+        removed = card_mod.remove(args.card)                    # never leave an older card beside this report
+        try:
+            made = report.fill_gap_card(args.card, symbol=args.symbol)
+            print("card   -> " + ", ".join(str(v.resolve()) for v in made.values() if v is not None))
+            if made["png"] is None:
+                print('         (SVG only: pip install "deptho[png]" for the PNG)')
+        except ValueError as e:
+            failed = (e, removed)
     if not args.no_open:
         webbrowser.open(path.as_uri())
+    if failed is not None:
+        e, removed = failed
+        bar = "!" * 72
+        lines = [bar, "!!  FILL GAP CARD NOT WRITTEN", f"!!  {e}"]
+        if removed:
+            lines.append("!!  removed the older card at that path: " + ", ".join(p.name for p in removed))
+        lines.append(bar)
+        print("\n" + "\n".join(lines), file=sys.stderr)
+        raise SystemExit(1)
     return path
 
 

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deptho"
-version = "0.1.1"
+version = "0.1.2"
 description = "The tick-level reality check for crypto perp backtests: tearsheets with funding and fee attribution, offline."
 readme = "README.md"
 license = "Apache-2.0"
@@ -38,7 +38,8 @@ Source = "https://github.com/jjinaustin/deptho"
 parquet = ["pyarrow>=12"]
 notebook = ["ipython"]
 memory = ["psutil"]
-all = ["pyarrow>=12", "ipython", "psutil"]
+png = ["pillow>=10.1"]
+all = ["pyarrow>=12", "ipython", "psutil", "pillow>=10.1"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deptho"]

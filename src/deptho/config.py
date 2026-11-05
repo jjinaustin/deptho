@@ -17,7 +17,7 @@ HOMEPAGE = "https://deptho.io"
 
 
 DEFAULT_UPGRADE_URL = f"{HOMEPAGE}/pro.html"
-LINK_SOURCES = ("banner", "docstring", "report-footer")
+LINK_SOURCES = ("banner", "docstring", "report-footer", "card")
 
 
 def via(source: str, url: str | None = None) -> str:

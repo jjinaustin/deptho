@@ -71,6 +71,31 @@ class Report:
         return (f'<div class="dp-footer" style="{style}">Made with <a href="{html.escape(via("report-footer"))}" target="_blank" '
                 f'rel="noopener" style="color:{c("ink-muted")};text-decoration:underline">Deptho</a></div>')
 
+    def fill_gap_card(self, path: str | Path, symbol: str | None = None, measured: bool | None = None) -> dict:
+        """One shareable image: the return a bar-close backtest shows vs the return once its
+        orders are replayed against trades, the gap between them in points, the fees and funding
+        both include, symbol and period ("Synthetic demo data" when the demo made the data). Writes ``<path>.svg`` and, with Pillow installed, ``<path>.png``;
+        returns ``{"svg": Path, "png": Path | None}``.
+
+        Needs a report built from ``pnl=`` whose slippage was measured by replaying the orders
+        (``dp.simulate_taker_fills`` -> ``dp.slippage_bps`` -> ``pnl_from_positions(slippage_bps=...)``).
+        A report built with those ``fills=`` counts as measured even when the cost came out at or
+        below zero and nothing was charged: the card then shows 0.0 pts and says the fills matched.
+        ``measured=True`` says the same without ``fills=``; with neither, no slippage is refused.
+        Every number on it is from your run. Nothing is sent anywhere. The small "Made with
+        Deptho" mark goes with the report footer's switches (``dp.config.report_footer``).
+        """
+        from . import card
+
+        from ._synthetic import SYNTHETIC_TAG
+
+        synthetic = self.data_tag == SYNTHETIC_TAG              # the demo's --synthetic data says so on the card
+        if measured is None:
+            measured = (self.fills is not None and "slippage_bps" in self.fills
+                        and bool(self.fills["slippage_bps"].notna().any()))
+        numbers = card.gap_numbers(self.pnl, symbol or self.title, synthetic=synthetic, measured=measured)
+        return card.write(numbers, path)
+
     def to_html(self, include_plotlyjs: bool | str = True) -> str:
         cfg = {"displaylogo": False, "responsive": True}
         wide = self.figure.to_html(full_html=False, include_plotlyjs=include_plotlyjs, config=cfg)
@@ -139,6 +164,15 @@ def _pct(x: float, digits: int = 1) -> str:
     return "n/a" if x is None or not np.isfinite(x) else f"{x * 100:+.{digits}f}%"
 
 
+def _share(x: float) -> str:
+    """A ratio as a percentage: whole points from 10% up, one decimal below, never "-0%"."""
+    if x is None or not np.isfinite(x):
+        return "n/a"
+    v = x * 100
+    text = f"{v:.0f}%" if abs(v) >= 10 else f"{v:.1f}%"
+    return "0%" if text.lstrip("-") in ("0%", "0.0%") else text
+
+
 def _num(x: float, digits: int = 2) -> str:
     return "n/a" if x is None or not np.isfinite(x) else f"{x:.{digits}f}"
 
@@ -179,6 +213,7 @@ def tearsheet(
     title: str = "Strategy",
     fills_label: str = "Execution cost",
     data_tag: str | None = None,
+    slippage_label: str = "Slippage",
 ) -> Report:
     """Build the dashboard.
 
@@ -189,6 +224,8 @@ def tearsheet(
     replay)" for replayed fills); ``benchmark`` (per-period
     returns of e.g. BTC buy-and-hold) turns the alpha panel into true alpha.
     ``data_tag`` (e.g. "SYNTHETIC DATA · DEMO") is stamped top-right on every chart.
+    ``slippage_label`` names the slippage line in the cost-drag panel, e.g. "Slippage (mean replay
+    cost, 0.42 bps)" to say what was charged.
     """
     if pnl is not None:
         rets = pnl["net"]
@@ -272,7 +309,7 @@ def tearsheet(
         if pnl is not None:
             # Every cost is a loss colour; dash style tells them apart.
             for col, name, dash in (("funding", "Funding", None), ("fees", "Fees", "dash"),
-                                    ("slippage", "Slippage", "dot")):
+                                    ("slippage", slippage_label, "dot")):
                 if pnl[col].abs().sum() > 0:
                     line(pnl.index, pnl[col].cumsum(), name, c("loss"), "cost", dash=dash)
         else:
@@ -343,11 +380,10 @@ def tearsheet(
         stats["gross_return"] = gross
         stats["funding_drag_of_gross"] = fund / abs(gross) if gross else float("nan")
         tiles.append(("Funding paid", _pct(fund, 2)))
-        tiles.append(("Funding / |gross|", "n/a" if not np.isfinite(stats["funding_drag_of_gross"])
-                      else f"{stats['funding_drag_of_gross'] * 100:.0f}%"))
+        tiles.append(("Funding / |gross|", _share(stats["funding_drag_of_gross"])))
     if has_slip:
         stats["slippage_bps_mean"] = float(slip["slippage_bps"].mean())
-        short = "Exec cost (sim)" if "simulated" in fills_label.lower() else "Exec cost"
+        short = "Mean replay cost" if "simulated" in fills_label.lower() else "Mean exec cost"
         tiles.append((short, f"{stats['slippage_bps_mean']:.2f} bps",
                       f"Average {fills_label.lower()} per fill, in bps vs arrival price (+ = cost)."))
 

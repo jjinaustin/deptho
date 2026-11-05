@@ -109,6 +109,7 @@ def simulate_taker_fills(
     orders: pd.DataFrame,
     depth: pd.DataFrame | None = None,
     fill_model: str = "auto",
+    max_wait=None,
 ) -> pd.DataFrame:
     """Trade-print execution replay: estimate what market orders would have paid.
 
@@ -131,6 +132,10 @@ def simulate_taker_fills(
     * ``"auto"`` (default): ``depth_bands`` if ``depth`` is given, else ``trade_prints``.
     * ``"book"``: reserved for level-by-level fills from a reconstructed order book (not available yet).
 
+    ``max_wait`` (e.g. ``"5min"``; default None, no limit): drop an order whose reference print
+    is older than that, or whose fill needs prints later than that after the order, instead of
+    filling it across a gap in the tape (missing data, or two separate days of trades).
+
     ``ref_price`` is the last print before the order. With depth bands,
     ``depth`` is the resting size (base units) inside the tightest band and
     ``depth_band_bps`` that component of the cost.
@@ -144,6 +149,7 @@ def simulate_taker_fills(
     ref = np.where(prev >= 0, ref, np.nan)
 
     fill = np.full(len(orders), np.nan)
+    last_print = np.full(len(orders), np.iinfo(np.int64).max)
     sides = orders["side"].to_numpy()
     qtys = orders["qty"].to_numpy(dtype=float)
     for s in (1, -1):
@@ -161,6 +167,13 @@ def simulate_taker_fills(
         filled = cq[end] - cq[start]
         vwap = np.where(filled > 0, (cpq[end] - cpq[start]) / np.where(filled > 0, filled, 1), np.nan)
         fill[sel] = np.where(ok, vwap, np.nan)
+        last_print[sel] = ts[np.clip(end - 1, 0, len(ts) - 1)]
+
+    if max_wait is not None:
+        lim = pd.Timedelta(max_wait).value
+        ref_time = t_ns[np.clip(prev, 0, None)]
+        stale = (prev < 0) | (o_ns - ref_time > lim) | (last_print - o_ns > lim)
+        fill = np.where(stale, np.nan, fill)
 
     out = pd.DataFrame({"side": sides, "qty": qtys, "price": fill, "ref_price": ref}, index=orders.index)
     return apply_depth_bands(out, depth if model == "depth_bands" else None)

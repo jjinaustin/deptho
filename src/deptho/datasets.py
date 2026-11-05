@@ -50,10 +50,12 @@ def _read(path: str | Path, cols: list[str], usecols: list[str] | None = None) -
 
 
 def _ms_index(s: pd.Series) -> pd.DatetimeIndex:
-    # Binance switched some spot files to microseconds in 2025; normalise.
+    """Epoch timestamps in milliseconds (13 digits) or microseconds (16 digits; Binance moved some
+    archive files to microseconds in 2025), decided per value, so a file or a join of files that
+    mixes the two still lands on the right times."""
     v = s.to_numpy(dtype="int64")
-    unit = "us" if len(v) and v[0] > 10**14 else "ms"
-    return pd.to_datetime(v, unit=unit, utc=True)
+    ns = np.where(v > 10**14, v * 1_000, v * 1_000_000)
+    return pd.to_datetime(ns, unit="ns", utc=True)
 
 
 @pro_counterpart("Deptho Pro: deptho_pro.sync joins months of these daily files into one memory-mapped dataset")
@@ -119,7 +121,10 @@ def read_funding(path) -> pd.Series:
 def read_bookdepth(path) -> pd.DataFrame:
     """Snapshots of cumulative resting notional within +/-N% of mid (wide format by percentage)."""
     df = _read(path, BOOKDEPTH_COLS)
-    df["ts"] = pd.to_datetime(df["timestamp"], utc=True)
+    if pd.api.types.is_numeric_dtype(df["timestamp"]):       # epoch ms or us, like the other files
+        df["ts"] = _ms_index(df["timestamp"])
+    else:
+        df["ts"] = pd.to_datetime(df["timestamp"], utc=True)
     wide = df.pivot_table(index="ts", columns="percentage", values="notional", aggfunc="last")
     wide.columns = [float(c) for c in wide.columns]
     return wide
